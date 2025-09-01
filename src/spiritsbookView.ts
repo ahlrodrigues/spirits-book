@@ -1,16 +1,12 @@
-// Defines a constant for identifying the custom view type used by the plugin within Obsidian
+// src/spiritsbookView.ts
+import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
+import type SpiritsBookPlugin from "./main";
+
 export const VIEW_TYPE_SPIRITSBOOK = "spiritsbook-view";
 
-// Required imports from Obsidian API and Node modules
-import { ItemView, WorkspaceLeaf, Notice, FileSystemAdapter } from "obsidian";
-import * as fs from 'fs/promises';
-import * as path from 'path';
-
-// Type for language support
 type SupportedLanguage = 'pt-BR' | 'en' | 'es' | 'fr';
 
-// UI translations for supported languages
-const i18n: Record<SupportedLanguage, { [key: string]: string }> = {
+const i18n: Record<SupportedLanguage, Record<string, string>> = {
   "pt-BR": {
     title: "Livro dos Espíritos",
     question: "Pergunta",
@@ -67,7 +63,7 @@ const i18n: Record<SupportedLanguage, { [key: string]: string }> = {
     question: "Question",
     all: "📖 Toutes",
     favorites: "⭐ Favoris",
-    favoritesTitle: "⭐ Questions favorites :",
+    favoritesTitle: "⭐ Questions favorites :",
     previous: "⬅️ Précédente",
     next: "Suivante ➡️",
     favorite: "⭐ Favori",
@@ -81,157 +77,124 @@ const i18n: Record<SupportedLanguage, { [key: string]: string }> = {
   }
 };
 
-// The main view class for the plugin, representing the UI interface
 export class SpiritsBookView extends ItemView {
-  plugin: any;
-  container: HTMLElement;
-  questions: any[] = [];
-  currentIndex: number = 0;
-  favorites: Set<number> = new Set();
-  favBtnEl: HTMLButtonElement | null = null;
+  private plugin: SpiritsBookPlugin;
+  private container!: HTMLElement;
+  private questions: Array<{ numero: number; pergunta: string; resposta: string }> = [];
+  private currentIndex = 0;
+  private favorites = new Set<number>();
+  private favBtnEl: HTMLButtonElement | null = null;
+  private currentTab: 'all' | 'favorites' = 'all';
 
-  constructor(leaf: WorkspaceLeaf, plugin: any) {
+  constructor(leaf: WorkspaceLeaf, plugin: SpiritsBookPlugin) {
     super(leaf);
     this.plugin = plugin;
   }
 
-  // Returns the view type identifier
-  getViewType() {
-    return VIEW_TYPE_SPIRITSBOOK;
-  }
+  getViewType() { return VIEW_TYPE_SPIRITSBOOK; }
 
-  // Returns the localized title of the plugin
   getDisplayText() {
-    const lang = (this.plugin.settings.language || "en") as SupportedLanguage;
+    const lang = this.getLang();
     return i18n[lang].title;
   }
 
-  // Returns an icon identifier for the view
-  getIcon() {
-    return "book";
-  }
+  getIcon() { return "book"; }
 
-  // Called when the view is opened — loads styles, questions and renders UI
   async onOpen() {
-    this.container = this.containerEl.children[1] as HTMLElement;
-    this.container.empty();
+    const { contentEl } = this;
+    contentEl.empty();
+    this.container = contentEl;
+
     await this.loadQuestions();
     this.renderUI();
   }
 
-// Loads the questions from a JSON file according to the selected language
-async loadQuestions() {
-  const lang = (this.plugin.settings.language || "en") as SupportedLanguage;
-  try {
-    const adapter = this.plugin.app.vault.adapter;
-    if (!(adapter instanceof FileSystemAdapter)) {
-      new Notice("Incompatible storage adapter.");
-      return;
-    }
-
-    const basePath = adapter.getBasePath();
-    const configDir = this.plugin.app.vault.configDir;
-    const pluginFolder = path.join(configDir, "plugins", "obsisdian-spirits-book");
-    let dataPath: string;
-
-    try {
-      const overridePathRaw = await fs.readFile(
-        path.join(basePath, pluginFolder, "path.json"),
-        "utf-8"
-      );
-      const override = JSON.parse(overridePathRaw);
-      dataPath = path.isAbsolute(override.path)
-        ? override.path
-        : path.join(basePath, override.path);
-    } catch {
-      dataPath = path.join(basePath, pluginFolder, "data");
-    }
-
-    const fullPath = path.join(dataPath, `livro_${lang}.json`);
-    const content = await fs.readFile(fullPath, "utf-8");
-    this.questions = JSON.parse(content);
-  } catch (e) {
-    new Notice(i18n[lang].errorLoading);
-    console.error("Erro ao carregar o livro:", e);
+  async onClose() {
+    this.contentEl.empty();
   }
-}
-  // Renders the main UI (All questions tab)
-  renderUI() {
+
+  // Language + data
+  private getLang(): SupportedLanguage {
+    const lang = (this.plugin?.lang ?? "en") as SupportedLanguage;
+    return (['pt-BR','en','es','fr'] as SupportedLanguage[]).includes(lang) ? lang : 'en';
+    // (se quiser, pode mapear "pt" → "pt-BR" aqui)
+  }
+
+  private async loadQuestions() {
+    const lang = this.getLang();
+    try {
+      const livro: any = (this.plugin as any)?.livro;
+      const qs = Array.isArray(livro) ? livro : (livro?.perguntas ?? []);
+      this.questions = Array.isArray(qs) ? qs : [];
+      console.log('[SpiritsBook] loadQuestions | lang:', lang, '| total:', this.questions.length);
+      if (!this.questions.length) new Notice(i18n[lang].errorLoading);
+    } catch (e) {
+      console.error("[SpiritsBook] Error loading questions:", e);
+      new Notice(i18n[lang].errorLoading);
+      this.questions = [];
+    }
+  }
+
+  // UI
+  private renderUI() {
     if (!this.questions.length) return;
-    const lang = (this.plugin.settings.language || "en") as SupportedLanguage;
+
+    const lang = this.getLang();
     const t = i18n[lang];
-    this.plugin.settings.tab = 'all';
+    this.currentTab = 'all';
 
     this.container.empty();
-    const wrapper = this.container.createDiv("spiritsbook-wrapper");
+    const wrapper = this.container.createDiv({ cls: "spiritsbook-wrapper" });
 
     const title = wrapper.createEl("h1", { text: "📘 " + this.getDisplayText() });
     title.addClass("spiritsbook-title");
 
-    const tabs = wrapper.createDiv("spiritsbook-tabs");
-    if (this.plugin.settings.tab !== 'favorites') {
-      const tabFav = tabs.createEl("button", { text: t.favorites });
-      tabFav.onclick = () => this.renderFavorites();
-    }
+    const tabs = wrapper.createDiv({ cls: "spiritsbook-tabs" });
+    // Estamos na aba "all": sempre ofereça ir para "favorites"
+    const tabFav = tabs.createEl("button", { text: t.favorites });
+    tabFav.onclick = () => this.renderFavorites();
 
-    const display = wrapper.createDiv("spiritsbook-display") as HTMLDivElement;
+    wrapper.createDiv({ cls: "spiritsbook-display" });
 
-    const nav = wrapper.createDiv("spiritsbook-nav");
+    const nav = wrapper.createDiv({ cls: "spiritsbook-nav" });
     const prevBtn = nav.createEl("button", { text: t.previous });
     const nextBtn = nav.createEl("button", { text: t.next });
     prevBtn.onclick = () => this.showQuestion(this.currentIndex - 1);
     nextBtn.onclick = () => this.showQuestion(this.currentIndex + 1);
 
-    const favContainer = wrapper.createDiv("spiritsbook-fav-container");
+    const favContainer = wrapper.createDiv({ cls: "spiritsbook-fav-container" });
     this.favBtnEl = favContainer.createEl("button");
     this.updateFavoriteButton();
-    this.favBtnEl.onclick = () => {
-      this.toggleFavorite();
-      this.updateFavoriteButton();
-    };
+    this.favBtnEl.onclick = () => { this.toggleFavorite(); this.updateFavoriteButton(); };
 
     const rndBtn = favContainer.createEl("button", { text: t.random });
     rndBtn.onclick = () => this.showRandom();
 
-    const footer = wrapper.createDiv("spiritsbook-footer");
-    footer.addClass("spiritsbook-footer");
-
+    const footer = wrapper.createDiv({ cls: "spiritsbook-footer" });
     const select = footer.createEl("select") as HTMLSelectElement;
     this.questions.forEach((q, i) => {
       select.add(new Option(`#${q.numero} - ${q.pergunta?.substring(0, 50) || "..."}`, i.toString()));
     });
-    select.onchange = () => this.showQuestion(parseInt(select.value));
+    select.onchange = () => this.showQuestion(parseInt(select.value, 10));
 
     this.showQuestion(this.currentIndex);
   }
 
-  // Updates the favorite button text according to whether the current question is a favorite
-  updateFavoriteButton() {
-    if (!this.favBtnEl) return;
-    const lang = (this.plugin.settings.language || "en") as SupportedLanguage;
+  private renderFavorites() {
+    const lang = this.getLang();
     const t = i18n[lang];
-    const q = this.questions[this.currentIndex];
-    this.favBtnEl.setText(this.favorites.has(q.numero) ? t.unfavorite : t.favorite);
-  }
-
-  // Renders the UI for the favorites tab
-  renderFavorites() {
-    const lang = (this.plugin.settings.language || "en") as SupportedLanguage;
-    const t = i18n[lang];
-    this.plugin.settings.tab = 'favorites';
+    this.currentTab = 'favorites';
 
     this.container.empty();
-    const wrapper = this.container.createDiv("spiritsbook-wrapper");
+    const wrapper = this.container.createDiv({ cls: "spiritsbook-wrapper" });
 
     const favTitle = wrapper.createEl("h1", { text: t.favoritesTitle });
     favTitle.addClass("spiritsbook-title");
-    
 
-    const tabs = wrapper.createDiv("spiritsbook-tabs");
-    if (this.plugin.settings.tab !== 'all') {
-      const tabAll = tabs.createEl("button", { text: t.all });
-      tabAll.onclick = () => this.renderUI();
-    }
+    const tabs = wrapper.createDiv({ cls: "spiritsbook-tabs" });
+    // Estamos na aba "favorites": sempre ofereça voltar para "all"
+    const tabAll = tabs.createEl("button", { text: t.all });
+    tabAll.onclick = () => this.renderUI();
 
     const favs = this.questions.filter(q => this.favorites.has(q.numero));
     if (!favs.length) {
@@ -249,38 +212,49 @@ async loadQuestions() {
         e.preventDefault();
         const index = this.questions.findIndex(item => item.numero === q.numero);
         this.renderUI();
-        setTimeout(() => this.showQuestion(index), 10);
+        setTimeout(() => this.showQuestion(index), 0);
       };
     });
   }
 
-  // Displays the question and its answer in the main display container
-  showQuestion(index: number) {
+  private showQuestion(index: number) {
     if (index < 0 || index >= this.questions.length) return;
     this.currentIndex = index;
     const q = this.questions[index];
 
-    const display = this.container.querySelector(".spiritsbook-display") as HTMLDivElement;
+    const display = this.container.querySelector(".spiritsbook-display") as HTMLDivElement | null;
     if (!display) return;
     display.empty();
 
-    const questionEl = display.createDiv({ cls: 'spiritsbook-question' });
-    const h2 = questionEl.createEl("h2", {
-      text: `${this.translate("question", this.plugin.settings.language)} ${q.numero}`
-    });
-    h2.addClass("spiritsbook-question-title");    questionEl.createEl("p", { text: q.pergunta });
+    const lang = this.getLang();
+    const questionLabel = i18n[lang].question;
 
+    const questionEl = display.createDiv({ cls: "spiritsbook-question" });
+    const h2 = questionEl.createEl("h2", { text: `${questionLabel} ${q.numero}` });
+    h2.addClass("spiritsbook-question-title");
+
+    questionEl.createEl("p", { text: q.pergunta });
     const answerEl = display.createEl("blockquote", { text: q.resposta });
     answerEl.addClass("spiritsbook-answer");
 
     this.updateFavoriteButton();
   }
 
-  // Toggles the favorite state of the current question
-  toggleFavorite() {
-    const lang = (this.plugin.settings.language || "en") as SupportedLanguage;
+  private updateFavoriteButton() {
+    if (!this.favBtnEl) return;
+    const lang = this.getLang();
     const t = i18n[lang];
     const q = this.questions[this.currentIndex];
+    if (!q) return;
+    this.favBtnEl.setText(this.favorites.has(q.numero) ? t.unfavorite : t.favorite);
+  }
+
+  private toggleFavorite() {
+    const lang = this.getLang();
+    const t = i18n[lang];
+    const q = this.questions[this.currentIndex];
+    if (!q) return;
+
     if (this.favorites.has(q.numero)) {
       this.favorites.delete(q.numero);
       new Notice(`${t.removedFromFavorites}: #${q.numero}`);
@@ -290,22 +264,13 @@ async loadQuestions() {
     }
   }
 
-  // Randomly selects a question to display
-  showRandom() {
-    const lang = (this.plugin.settings.language || "en") as SupportedLanguage;
+  private showRandom() {
+    const lang = this.getLang();
     const t = i18n[lang];
+    if (!this.questions.length) return;
+
     const index = Math.floor(Math.random() * this.questions.length);
     this.showQuestion(index);
     new Notice(t.randomShown);
   }
-
-  // Called when the view is closed
-  async onClose() {
-  }
-
-  // Helper function for translating UI strings
-  private translate(key: string, lang: SupportedLanguage = "en") {
-    return i18n[lang]?.[key] || key;
-  }
-  
 }

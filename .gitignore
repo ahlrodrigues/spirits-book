@@ -1,19 +1,39 @@
-# vscode
-.vscode 
+# ===============================
+# IDEs / Editors
+# ===============================
 
-# Intellij
+# VSCode
+.vscode/
+
+# IntelliJ / JetBrains
 *.iml
-.idea
+.idea/
 
-# npm
-node_modules
+# ===============================
+# Node / npm
+# ===============================
+node_modules/
 
-# Exclude sourcemaps
+# ===============================
+# Source Maps
+# ===============================
 *.map
 
-# obsidian
+# ===============================
+# Obsidian plugin data (não versionar arquivo local de dados)
+# ===============================
 data.json
 
-# Exclude macOS Finder (System Explorer) View States
+# ===============================
+# macOS Finder / System Explorer
+# ===============================
 .DS_Store
-.*
+
+# ===============================
+# Build / Release artifacts
+# ===============================
+main.js
+styles.css
+manifest.json
+dist/
+
