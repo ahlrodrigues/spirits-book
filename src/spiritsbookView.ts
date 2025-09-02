@@ -1,6 +1,7 @@
 // src/spiritsbookView.ts
 import { ItemView, WorkspaceLeaf, Notice } from "obsidian";
 import type SpiritsBookPlugin from "./main";
+import { Pergunta, normalizeLivro } from "./types";
 
 export const VIEW_TYPE_SPIRITSBOOK = "spiritsbook-view";
 
@@ -80,7 +81,7 @@ const i18n: Record<SupportedLanguage, Record<string, string>> = {
 export class SpiritsBookView extends ItemView {
   private plugin: SpiritsBookPlugin;
   private container!: HTMLElement;
-  private questions: Array<{ numero: number; pergunta: string; resposta: string }> = [];
+  private questions: Pergunta[] = [];
   private currentIndex = 0;
   private favorites = new Set<number>();
   private favBtnEl: HTMLButtonElement | null = null;
@@ -115,18 +116,22 @@ export class SpiritsBookView extends ItemView {
 
   // Language + data
   private getLang(): SupportedLanguage {
-    const lang = (this.plugin?.lang ?? "en") as SupportedLanguage;
+    // Se seu plugin usa settings.language, pode trocar para this.plugin.settings?.language
+    const raw = (this.plugin as unknown as { lang?: string }).lang ?? "en";
+    const lang = (raw === "pt" ? "pt-BR" : raw) as SupportedLanguage;
     return (['pt-BR','en','es','fr'] as SupportedLanguage[]).includes(lang) ? lang : 'en';
-    // (se quiser, pode mapear "pt" → "pt-BR" aqui)
   }
 
   private async loadQuestions() {
     const lang = this.getLang();
     try {
-      const livro: any = (this.plugin as any)?.livro;
-      const qs = Array.isArray(livro) ? livro : (livro?.perguntas ?? []);
-      this.questions = Array.isArray(qs) ? qs : [];
+      // Evita 'any': usa unknown + normalização tipada
+      const pluginComLivro = this.plugin as unknown as { livro?: unknown };
+      const perguntas = normalizeLivro(pluginComLivro?.livro);
+
+      this.questions = perguntas;
       console.log('[SpiritsBook] loadQuestions | lang:', lang, '| total:', this.questions.length);
+
       if (!this.questions.length) new Notice(i18n[lang].errorLoading);
     } catch (e) {
       console.error("[SpiritsBook] Error loading questions:", e);
